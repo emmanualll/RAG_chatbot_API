@@ -22,6 +22,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+
 load_dotenv()
 
 #configuration
@@ -32,10 +33,11 @@ AZURE_API_VERSION     = os.getenv("OPENAI_API_VERSION")
 AZURE_CHAT_DEPLOYMENT = os.getenv("AZURE_DEPLOYMENT_NAME")
 TOP_K                 = 4
 
+
 #THE PROMPT
 RAG_PROMPT = PromptTemplate(
     input_variable = ["context", "question"],
-    template = """nswer using ONLY the provided context.
+    template = """Answer using ONLY the provided context.
 If the answer is not present, say:
 "I don't have enough information in the provided text."
 
@@ -66,7 +68,7 @@ app_state = AppState()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
-    This runs on startup - it laods the faiss and buils the chain once
+    This runs on startup, it laods the faiss and buils the chain once
     Fastapi ensure that this is alive for all request i.e., there is no reloading per request
     """
     print("Starting up! Loading the FAISS index and building chain...")
@@ -219,3 +221,16 @@ def clear_history():
     if app_state.memory:
         app_state.memory.clear()
     return {"status": "ok", "message": "Conversation history cleared."}
+
+@app.post("/reload", summary="Reload FAISS index from disk")
+async def reload():
+    """Call this after uploading a new PDF via the ingest API."""
+    embeddings = get_embeddings()
+    vectorstore = FAISS.load_local(
+        FAISS_INDEX, embeddings, allow_dangerous_deserialization=True
+    )
+    app_state.chain.retriever = vectorstore.as_retriever(
+        search_type="similarity", search_kwargs={"k": TOP_K}
+    )
+    app_state.memory.clear()
+    return {"status": "ok", "message": "FAISS index reloaded."}
