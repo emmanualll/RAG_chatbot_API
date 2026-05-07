@@ -21,6 +21,7 @@ from langchain.prompts import PromptTemplate
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from typing import Optional
 
 
 load_dotenv()
@@ -38,7 +39,7 @@ TOP_K                 = 4
 RAG_PROMPT = PromptTemplate(
     input_variable = ["context", "question"],
     template = """Answer using ONLY the provided context.
-If the answer is not present, say:
+If the answer is not present, strictly only say:
 "I don't have enough information in the provided text."
 
 Keep the answer concise.
@@ -53,15 +54,17 @@ Answer:
 
 def get_embeddings():
     print("Embedding again, ensuring that it matches ingest.py")
+    print("Using all mpnet base model for embedding")
     from langchain_huggingface import HuggingFaceEmbeddings
     return HuggingFaceEmbeddings(
-        model_name="sentence-transformers/all-MiniLM-L6-v2",
+        model_name="sentence-transformers/all-mpnet-base-v2",
         model_kwargs={"device": "cpu"},
     )
 
 class AppState:
     chain: ConversationalRetrievalChain = None
     memory: ConversationBufferWindowMemory = None
+    vectorstore: FAISS = None
  
 app_state = AppState()
 
@@ -91,8 +94,8 @@ async def lifespan(app: FastAPI):
     )
 
     retriever = vectorstore.as_retriever(
-        search_type="similarity",
-        search_kwargs={"k": TOP_K},
+        search_type="similarity_score_threshold",
+        search_kwargs={"k": TOP_K, "score_threshold": 0.3},
     )
         
     #azure openai llm (azure deployment is the name of the deployment in azure portal)
@@ -124,6 +127,8 @@ async def lifespan(app: FastAPI):
         return_source_documents=True,
         combine_docs_chain_kwargs={"prompt": RAG_PROMPT},
     )
+
+    app_state.vectorstore = vectorstore 
 
     print(f"Ready -> Deployment: {AZURE_CHAT_DEPLOYMENT}")
     yield
@@ -159,6 +164,7 @@ class ChatRequest(BaseModel):
 class SourceDocument(BaseModel):
     page: int
     preview: str
+    relevance: Optional[float] = None
  
 class ChatResponse(BaseModel):
     question: str
@@ -168,7 +174,7 @@ class ChatResponse(BaseModel):
 #endpoints
 @app.get("/health", summary = "Health check")
 def health():
-    """Check the sever staus and whether the FAISS index is loaded """
+    """Check the server status and whether the FAISS index is loaded """
     return {
         "status": "ok",
         "faiss_loaded": app_state.chain is not None,
@@ -196,18 +202,28 @@ async def chat(request: ChatRequest):
         if "AuthenticationError" in error or "401" in error:
             raise HTTPException(status_code=502, detail="Azure API key invalid.")
         raise HTTPException(status_code=500, detail=error)
- 
+    
+    
     # Deduplicate sources by page number
+    docs_with_scores = app_state.vectorstore.similarity_search_with_score(request.question, k=TOP_K)
     sources = []
     seen_pages = set()
-    for doc in result.get("source_documents", []):
-        page = doc.metadata.get("page", 0) + 1  # PyPDF is 0-indexed
+    for doc, score in docs_with_scores:
+        if score > 1.8:  # filter low relevance
+            continue
+        if "<pad>" in doc.page_content:  # ← add this
+            continue
+        page = doc.metadata.get("page", 0) + 1
         if page not in seen_pages:
             seen_pages.add(page)
+            similarity_pct = round((1 / (1 + score)) * 100, 1)
             sources.append(SourceDocument(
                 page=page,
                 preview=doc.page_content[:200].replace("\n", " "),
+                relevance=similarity_pct
             ))
+    if "don't have enough information" in result["answer"].lower():  # ← HERE
+        sources = []
  
     return ChatResponse(
         question=request.question,
@@ -232,5 +248,6 @@ async def reload():
     app_state.chain.retriever = vectorstore.as_retriever(
         search_type="similarity", search_kwargs={"k": TOP_K}
     )
+    app_state.vectorstore = vectorstore
     app_state.memory.clear()
     return {"status": "ok", "message": "FAISS index reloaded."}

@@ -17,15 +17,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
  
 from langchain_community.document_loaders import PyPDFLoader
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_experimental.text_splitter import SemanticChunker
 from langchain_community.vectorstores import FAISS
 load_dotenv()
 
 
 UPLOAD_DIR    = "data"
 FAISS_INDEX   = "faiss_index"
-CHUNK_SIZE    = 1000
-CHUNK_OVERLAP = 150   # overlap between chunks to preserve context
 
 AZURE_ENDPOINT    = os.getenv("AZURE_OPENAI_ENDPOINT")
 AZURE_API_KEY     = os.getenv("AZURE_OPENAI_API_KEY")
@@ -36,7 +34,7 @@ Path(UPLOAD_DIR).mkdir(parents=True, exist_ok=True)
 
 
 
-# ── Embedding selection ───────────────────────────────────────────────────────
+# ── Embedding selection 
 
 def get_embeddings():
     """
@@ -50,12 +48,12 @@ def get_embeddings():
     print("USING HuggingFace embeddings since Azure AI embeddings is not present")
     from langchain_huggingface import HuggingFaceEmbeddings
     return HuggingFaceEmbeddings(
-        model_name="sentence-transformers/all-MiniLM-L6-v2",
+        model_name="sentence-transformers/all-mpnet-base-v2",
         model_kwargs={"device": "cpu"},
     )
 
 
-# ── Main pipeline ─────────────────────────────────────────────────────────────
+# ── Main pipeline 
 
 def run_ingestion(pdf_path: str) -> dict:
     """
@@ -70,10 +68,9 @@ def run_ingestion(pdf_path: str) -> dict:
         raise ValueError("PDF appears to be empty or is image-based (scanned). Text extraction failed.")
  
     # 2. Split
-    splitter = RecursiveCharacterTextSplitter(
-        chunk_size=CHUNK_SIZE,
-        chunk_overlap=CHUNK_OVERLAP,
-        separators=["\n\n", "\n", ". ", " ", ""],
+    splitter = SemanticChunker(
+    get_embeddings(),
+    breakpoint_threshold_type="percentile"
     )
     chunks = splitter.split_documents(documents)
  

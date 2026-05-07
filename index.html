@@ -640,12 +640,6 @@
         </svg>
         <h2>Upload a PDF to get started</h2>
         <p>Drop your document in the sidebar, wait for ingestion to complete, then ask anything about it.</p>
-        <div class="suggestions">
-          <div class="suggestion" onclick="ask('What problem does the Transformer solve?')">What problem does the Transformer solve?</div>
-          <div class="suggestion" onclick="ask('Explain multi-head attention')">Explain multi-head attention</div>
-          <div class="suggestion" onclick="ask('What is positional encoding?')">What is positional encoding?</div>
-          <div class="suggestion" onclick="ask('What BLEU scores were reported?')">What BLEU scores were reported?</div>
-        </div>
       </div>
     </div>
 
@@ -823,7 +817,7 @@
 
   function renderSources(sources) {
     const chips = sources.map(s => `
-      <div class="source-chip">pg.${s.page}
+      <div class="source-chip">pg.${s.page} · ${s.relevance}%
         <div class="tooltip">${escapeHtml(s.preview)}</div>
       </div>`).join('');
     return `<div class="sources"><div class="sources-label">↳ sources</div>${chips}</div>`;
